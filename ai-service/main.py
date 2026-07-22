@@ -480,9 +480,19 @@ def run_inference_on_features(features: List[np.ndarray]) -> str:
         ]
         return np.random.choice(mock_translations)
         
-    # Limit max sequence length to 150 to keep processing fast
-    if len(features) > 150:
-        features = features[:150]
+    # If the user signs for a very long time, downsample the sequence evenly
+    # instead of hard-truncating, so the model sees the full context from start to end.
+    max_original_frames = 250
+    if len(features) > max_original_frames:
+        print(f"[AI Inference] Sequence too long ({len(features)} frames). Downsampling to {max_original_frames} to preserve full context.")
+        indices = np.linspace(0, len(features) - 1, max_original_frames)
+        downsampled = []
+        for idx in indices:
+            low = int(np.floor(idx))
+            high = int(np.ceil(idx))
+            weight = idx - low
+            downsampled.append(features[low] * (1.0 - weight) + features[high] * weight)
+        features = downsampled
         
     T = len(features)
     # Resample captured sequence from ~6.67 fps (150ms interval) to 25 fps
