@@ -300,7 +300,8 @@ class SignTranslationModel(nn.Module):
         landmark_mask: torch.Tensor,
         tokenizer: Any,
         num_beams: int = 4,
-        max_length: int = 128
+        max_length: int = 128,
+        **kwargs
     ) -> torch.Tensor:
         """
         Generates translated sentence token IDs using Beam Search.
@@ -315,12 +316,13 @@ class SignTranslationModel(nn.Module):
         
         encoder_mask = landmark_mask.long() if landmark_mask.dtype != torch.long else landmark_mask
         model_outputs = BaseModelOutput(last_hidden_state=encoder_outputs)
-
+ 
         generated_ids = self.mbart.generate(
             encoder_outputs=model_outputs,
             attention_mask=encoder_mask,
             num_beams=num_beams,
             max_length=max_length,
-            decoder_start_token_id=tokenizer.lang_code_to_id.get(getattr(tokenizer, "tgt_lang", "en_XX"))
+            decoder_start_token_id=tokenizer.lang_code_to_id.get(getattr(tokenizer, "tgt_lang", "en_XX")),
+            **kwargs
         )
         return generated_ids
