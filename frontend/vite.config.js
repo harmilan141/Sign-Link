@@ -35,7 +35,10 @@ export default defineConfig({
         target: process.env.VITE_LANDMARK_PROXY_TARGET || 'http://172.16.224.122:8000',
         changeOrigin: true,
         secure: false,
-        rewrite: (requestPath) => requestPath.replace(/^\/landmark-api/, '')
+        rewrite: (requestPath) => requestPath.replace(/^\/landmark-api/, ''),
+        headers: {
+          'bypass-tunnel-reminder': 'true'
+        }
       }
     }
   }
