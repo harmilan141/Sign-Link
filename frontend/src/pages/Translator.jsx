@@ -9,9 +9,9 @@ const cameraConstraints = {
   width: { ideal: 640 },
   height: { ideal: 480 }
 };
-const captureSize = { width: 480, height: 360 };
+const captureSize = { width: 320, height: 240 };
 const detectionIntervalMs = 150;
-const detectionJpegQuality = 0.55;
+const detectionJpegQuality = 0.35;
 
 export function Translator() {
   const { t } = useI18n();
