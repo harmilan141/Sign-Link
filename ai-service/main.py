@@ -1,6 +1,8 @@
 import asyncio
 import base64
 import os
+from dotenv import load_dotenv
+load_dotenv()
 os.environ["TRANSFORMERS_OFFLINE"] = "1"
 import threading
 import time
@@ -548,7 +550,11 @@ def run_inference_on_features(features: List[np.ndarray]) -> str:
             landmark_mask=landmark_mask,
             tokenizer=tokenizer,
             num_beams=4,
-            max_length=128
+            max_length=128,
+            no_repeat_ngram_size=3,
+            repetition_penalty=1.2,
+            temperature=0.7,
+            do_sample=True
         )
     translation = tokenizer.decode(generated_ids[0], skip_special_tokens=True)
     print(f"[AI Debug] Generated Token IDs: {generated_ids[0].tolist()}")
