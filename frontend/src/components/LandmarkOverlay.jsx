@@ -26,7 +26,8 @@ function point(landmark, width, height) {
   };
 }
 
-export const LandmarkOverlay = forwardRef(function LandmarkOverlay(_props, ref) {
+export const LandmarkOverlay = forwardRef(function LandmarkOverlay(props, ref) {
+  const { className } = props;
   const canvasRef = useRef(null);
   const statusRef = useRef('Landmark service idle');
   const [status, setStatus] = useState('Landmark service idle');
@@ -78,16 +79,8 @@ export const LandmarkOverlay = forwardRef(function LandmarkOverlay(_props, ref) 
       }
     }
 
-    context.fillStyle = 'rgba(242, 106, 91, 0.82)';
-    for (const face of detection.faces || []) {
-      for (const landmark of face.landmarks) {
-        if (landmark.index % faceSampleStep !== 0) continue;
-        const current = point(landmark, width, height);
-        context.beginPath();
-        context.arc(current.x, current.y, 2.5, 0, Math.PI * 2);
-        context.fill();
-      }
-    }
+    // Face landmarks rendering loop has been disabled to eliminate canvas rendering lag
+    // and keep visualization focused purely on hand movements for sign language.
   }, [clear]);
 
   const updateStatus = useCallback((nextStatus) => {
@@ -103,7 +96,7 @@ export const LandmarkOverlay = forwardRef(function LandmarkOverlay(_props, ref) 
   }), [clear, draw, updateStatus]);
 
   return (
-    <div className="landmark-layer">
+    <div className={`landmark-layer ${className || ''}`}>
       <canvas ref={canvasRef} aria-hidden="true" />
       <div className="detection-badge">{status}</div>
     </div>

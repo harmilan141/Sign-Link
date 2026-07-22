@@ -103,6 +103,19 @@ export function registerSockets(io) {
       io.to(`user:${receiverId}`).emit('call-ended', { callId, senderId: userId });
     });
 
+    socket.on('translation', ({ receiverId, text, inputMethod }) => {
+      console.log('[Socket.IO] translation forwarded', { senderId: userId, receiverId, text, inputMethod });
+      io.to(`user:${receiverId}`).emit('translation', { senderId: userId, text, inputMethod });
+    });
+
+    socket.on('live-caption', ({ receiverId, text }) => {
+      io.to(`user:${receiverId}`).emit('live-caption', { senderId: userId, text });
+    });
+
+    socket.on('peer-landmarks', ({ receiverId, landmarks }) => {
+      io.to(`user:${receiverId}`).emit('peer-landmarks', { senderId: userId, landmarks });
+    });
+
     socket.on('disconnect', () => {
       const sockets = onlineUsers.get(userId);
       sockets?.delete(socket.id);

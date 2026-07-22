@@ -32,7 +32,7 @@ export default defineConfig({
         ws: true
       },
       '/landmark-api': {
-        target: process.env.VITE_LANDMARK_PROXY_TARGET || 'http://127.0.0.1:8000',
+        target: process.env.VITE_LANDMARK_PROXY_TARGET || 'http://172.16.224.122:8000',
         changeOrigin: true,
         secure: false,
         rewrite: (requestPath) => requestPath.replace(/^\/landmark-api/, '')

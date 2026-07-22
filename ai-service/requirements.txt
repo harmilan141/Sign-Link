@@ -4,3 +4,9 @@ opencv-python==4.10.0.84
 mediapipe==0.10.18
 numpy==1.26.4
 python-multipart==0.0.19
+
+# signlinkLLM: Groq / Llama-3.3-70B refinement layer
+# https://github.com/Tarandeep98/signlinkLLM
+langchain-groq>=0.2.0
+langchain-core>=0.3.0
+python-dotenv>=1.0.0

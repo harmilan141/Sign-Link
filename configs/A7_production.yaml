@@ -1,0 +1,33 @@
+use_normalization: true
+use_masking: true
+use_modality_encoders: true
+decoder_adapt_mode: "cross_attn_unfrozen"
+use_auxiliary_ctc: true
+lambda_ctc: 0.3
+use_cross_val: false
+epochs: 35
+batch_size: 16
+lr: 0.0001
+weight_decay: 0.0001
+num_workers: 4
+label_smoothing: 0.1
+src_lang: "hi_IN"
+tgt_lang: "en_XX"
+npz_dir: "/workspace/SignLink/preprocessed"
+save_dir: "/workspace/SignLink/models/A7_production"
+log_dir: "/workspace/SignLink/logs/A7_production"
+save_checkpoints: true
+augment_config:
+  jitter_prob: 0.5
+  jitter_std: 0.005
+  scale_prob: 0.5
+  scale_min: 0.95
+  scale_max: 1.05
+  rotate_prob: 0.5
+  rotate_max_angle_deg: 10.0
+  mirror_prob: 0.0
+  speed_warp_prob: 0.5
+  speed_warp_min: 0.8
+  speed_warp_max: 1.2
+  frame_dropout_prob: 0.5
+  frame_dropout_rate: 0.05
