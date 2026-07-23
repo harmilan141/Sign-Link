@@ -94,8 +94,17 @@ model = None
 tokenizer = None
 
 checkpoint_paths = [
+    # A8 — LoRA-Optimized Full Pipeline, GPU-trained 2026-07-22 (dgxhnode2)
+    # Val BLEU-4: 55.09 | ROUGE-L: 64.42 | WER: 45.73% (NEW BEST)
+    Path("/workspace/SignLink/models/A8_lora_optimized/checkpoint_best.pt"),
+    # A7 production v2 — previous best
+    # Val BLEU-4: 22.66 | ROUGE-L: 28.04 | WER: 84.51%
+    Path("/workspace/SignLink/models/A7_production_v2/checkpoint_best.pt"),
+    # A7 production v1
     Path("/workspace/SignLink/models/A7_production/checkpoint_best.pt"),
+    # A5 production fallback
     Path("/workspace/SignLink/models/A5_production/checkpoint_best.pt"),
+    # Generic fallback paths
     Path("/workspace/SignLink/models/checkpoint_best.pt"),
     Path(__file__).parent.parent / "models" / "checkpoint_best.pt",
     Path("./models/checkpoint_best.pt"),
@@ -113,29 +122,59 @@ if checkpoint_path:
         from transformers import MBart50TokenizerFast
         print(f"[AI Model] Loading checkpoint from {checkpoint_path}")
         tokenizer = MBart50TokenizerFast.from_pretrained("facebook/mbart-large-50", src_lang="hi_IN", tgt_lang="en_XX", local_files_only=True)
-        checkpoint = torch.load(checkpoint_path, map_location=device)
+        checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
         state_dict = checkpoint["model_state_dict"]
-        
-        # Check if modality encoders are used
-        use_modality_encoders = "pose_enc.weight" in state_dict
-        
-        # Check decoder adaptation mode
-        if any("lora_A" in k for k in state_dict.keys()):
+
+        # ── Architecture auto-detection from checkpoint keys ──────────────────
+        # 1. Modality encoders (A3+): look for separate pose/hand/face encoders
+        #    New checkpoints use a grouped module key; old ones use flat keys.
+        use_modality_encoders = (
+            "pose_enc.weight" in state_dict
+            or any(k.startswith("modality_input_encoders.") for k in state_dict)
+        )
+
+        # 2. Decoder adaptation mode
+        if any("lora_A" in k for k in state_dict):
             decoder_adapt_mode = "lora_cross_attn"
+        elif any("encoder_attn.q_proj.weight" in k
+                 and "mbart.model.decoder" in k
+                 and k in state_dict
+                 and state_dict[k].requires_grad
+                 for k in state_dict):
+            decoder_adapt_mode = "cross_attn_unfrozen"
         else:
             decoder_adapt_mode = "frozen"
-            
-        # Check if ctc head is used and get vocab size
+        # Simpler cross_attn_unfrozen detection: cross-attn keys present with
+        # 'cross_attn_unfrozen' NOT a LoRA key => unfrozen full weights
+        has_cross_attn_keys = any(
+            "model.decoder.layers" in k and "encoder_attn" in k
+            for k in state_dict
+        )
+        has_lora = any("lora_A" in k for k in state_dict)
+        if has_cross_attn_keys and not has_lora:
+            decoder_adapt_mode = "cross_attn_unfrozen"
+
+        # 3. CTC head
         use_auxiliary_ctc = "ctc_head.weight" in state_dict
         gloss_vocab_size = None
         if use_auxiliary_ctc:
             gloss_vocab_size = state_dict["ctc_head.weight"].shape[0]
-            
-        # Check input dim if flat projection is used
+
+        # 4. Input dim (flat projection path only)
         input_dim = 1665
         if "linear_in.weight" in state_dict:
             input_dim = state_dict["linear_in.weight"].shape[1]
-            
+
+        # 5. vl_mapper architecture detection
+        #    New (A8+): Sequential MLP  → keys: vl_mapper.0.weight, .2.weight, .4.weight, .5.weight
+        #    Old (A7-): single nn.Linear → keys: vl_mapper.weight, vl_mapper.bias
+        has_new_vl_mapper = "vl_mapper.0.weight" in state_dict
+        has_old_vl_mapper = "vl_mapper.weight" in state_dict
+        print(f"[AI Model] Checkpoint architecture: modality_encoders={use_modality_encoders}, "
+              f"decoder_adapt={decoder_adapt_mode}, ctc={use_auxiliary_ctc}, "
+              f"vl_mapper={'MLP(new)' if has_new_vl_mapper else 'Linear(old)'}")
+        # ─────────────────────────────────────────────────────────────────────
+
         model = SignTranslationModel(
             input_dim=input_dim,
             d_model=512,
@@ -149,7 +188,25 @@ if checkpoint_path:
             use_auxiliary_ctc=use_auxiliary_ctc,
             gloss_vocab_size=gloss_vocab_size
         )
-        model.load_state_dict(state_dict)
+
+        # ── Compatibility shim for old single-Linear vl_mapper checkpoints ───
+        # If the checkpoint has the old vl_mapper.weight/.bias keys but the
+        # current model.py builds a Sequential MLP, remap them so strict loading
+        # doesn't fail. The old Linear maps d_model→mbart_dim directly; we load
+        # it into the final projection (vl_mapper[4]) of the new MLP.
+        if has_old_vl_mapper and not has_new_vl_mapper:
+            print("[AI Model] Applying vl_mapper compatibility shim (old Linear → new MLP final layer)")
+            state_dict["vl_mapper.4.weight"] = state_dict.pop("vl_mapper.weight")
+            state_dict["vl_mapper.4.bias"]   = state_dict.pop("vl_mapper.bias")
+            # Load with strict=False so missing MLP layers (0,2,5) keep random init
+            missing, unexpected = model.load_state_dict(state_dict, strict=False)
+            if unexpected:
+                print(f"[AI Model] Warning — unexpected keys after shim: {unexpected}")
+            if missing:
+                print(f"[AI Model] Info — randomly-initialized layers (expected): {[k for k in missing if 'vl_mapper' in k]}")
+        else:
+            model.load_state_dict(state_dict)
+
         model.to(device)
         model.eval()
         print("[AI Model] Model loaded successfully on", device)
@@ -167,45 +224,96 @@ else:
 # ─────────────────────────────────────────────────────────────────────────────
 
 # ── Sign-language refinement prompt (from signlinkLLM/prompts.py) ────────────
-SIGN_LLM_SYSTEM_PROMPT = """
-You are an expert Sign Language Translation Assistant.
+SIGN_LLM_SYSTEM_PROMPT = """You are a text-cleaning layer for a sign-language-to-English translation \
+pipeline. The text you receive comes from a sequence-to-sequence model that \
+sometimes stutters — it repeats words or short phrases due to decoding \
+artifacts (e.g. "bed bed prepare", "shirt shirt wear wear", "go go go store").
 
-The input originates from sign-language recognition and may follow sign-language
-grammar rather than English grammar.
+Your ONLY job is to turn that raw, possibly-repetitive output into one clean, \
+grammatical English sentence, and return it as JSON. You are a cleanup layer, \
+not a creative writer.
 
-Convert the input into natural, grammatically correct English while preserving
-the original meaning.
+## Rules, in priority order
 
-Rules:
-- Preserve meaning. Do not invent facts.
-- Infer grammar, tense, articles, and pronouns only when necessary.
-- Handle negation correctly.
-- Handle commands and questions correctly.
-- If multiple interpretations are possible, choose the most likely one and lower confidence.
-- If the input is a single word, profanity, or unclear fragment, minimally correct it and set confidence to low.
+1. DEDUPLICATE FIRST.
+   Collapse immediate or near-immediate repeated words/phrases into a single \
+   occurrence. "bed bed prepare" -> the model said "bed" and "prepare"; \
+   "shirt shirt wear wear" -> the model said "shirt" and "wear". Repetition \
+   is decoding noise, not emphasis — never interpret it as the signer \
+   repeating something on purpose unless it appears 4+ times with clear \
+   separation (rare; if unsure, treat it as noise).
 
-Confidence:
-- high: clear and unambiguous
-- medium: required reasonable inference
-- low: ambiguous, sparse, or unclear
+2. RECONSTRUCT, DON'T INVENT.
+   After deduplication you'll typically have a short, ungrammatical bag of \
+   content words (sign language glosses often drop articles, auxiliaries, \
+   and verb tense). Reconstruct the MOST LITERAL, MOST OBVIOUS standard \
+   English sentence that expresses exactly those words. Add only the \
+   minimal grammatical scaffolding (articles, "is/am/are", tense, word \
+   order) needed to make it a real sentence.
 
-Examples:
+3. NEVER HALLUCINATE.
+   Do not add objects, locations, times, reasons, or emotions that are not \
+   in the deduplicated words. Do not expand a 2-word input into a paragraph. \
+   "eat food food" -> "Eating food." or "I am eating food." — NOT "I am going \
+   to the kitchen to eat some delicious food because I am hungry."
+   If the deduplicated content is genuinely ambiguous between a couple of \
+   short phrasings, pick the shortest, most literal one. When truly \
+   uncertain, keep the sentence short rather than guessing at detail.
 
-Input: me hungry
-Output: I am hungry.
+4. IF NOTHING SALVAGEABLE REMAINS.
+   If after deduplication the input is empty, a single filler word, or \
+   still incoherent, return your best single-clause guess at the sentence \
+   and set confidence to "low". Never return an empty sentence.
 
-Input: i go market tomorrow
-Output: I will go to the market tomorrow.
+5. OUTPUT FORMAT — STRICT.
+   Return ONLY a single JSON object. No markdown fences, no prose before or \
+   after, no explanations. Exactly these two keys:
+   {
+     "corrected_sentence": "<the refined English translation, one sentence, ending in \
+a period, first letter capitalized>",
+     "confidence": "high" | "medium" | "low"
+   }
 
-Input: mother hospital yesterday
-Output: My mother went to the hospital yesterday.
+## Confidence calibration
 
-Input: bring water
-Output: Bring some water.
+- "high": input had clear, unambiguous repeated-word noise and a single \
+obvious clean reading (e.g. "shirt shirt wear wear" -> "Wearing a shirt.").
+- "medium": deduplication was needed AND some grammatical reconstruction \
+choice was non-obvious (tense, subject, article), but the content words \
+were unambiguous.
+- "low": the input was too sparse, contradictory, or degenerate to be \
+confident even one clean sentence captures it (e.g. only one or two bare \
+words remained, or repeated words don't form a coherent action/object pair).
 
-Input: water finish bring bottle
-Output: The water is finished. Bring a bottle.
-"""
+## Examples
+
+Input: "bed bed prepare"
+Output: {"corrected_sentence": "Prepare the bed.", "confidence": "high"}
+
+Input: "shirt shirt wear wear"
+Output: {"corrected_sentence": "Wearing a shirt.", "confidence": "high"}
+
+Input: "eat food food"
+Output: {"corrected_sentence": "Eating food.", "confidence": "high"}
+
+Input: "go go go store store buy milk"
+Output: {"corrected_sentence": "Go to the store to buy milk.", "confidence": "medium"}
+
+Input: "yesterday yesterday school teacher angry angry"
+Output: {"corrected_sentence": "Yesterday the teacher was angry at school.", "confidence": "medium"}
+
+Input: "water water water"
+Output: {"corrected_sentence": "Water.", "confidence": "low"}
+
+Input: "mother mother mother sick sick hospital hospital go go"
+Output: {"corrected_sentence": "Mother is sick and going to the hospital.", "confidence": "medium"}
+
+Input: "the the the"
+Output: {"corrected_sentence": "I don't understand.", "confidence": "low"}
+
+Remember: you are undoing a stutter, not writing a story. When in doubt, \
+prefer the shorter sentence and the lower confidence label over adding \
+detail you cannot verify from the input."""
 
 # ── Groq / Llama-3.3-70B chain (signlinkLLM architecture) ───────────────────
 groq_chain = None

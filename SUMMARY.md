@@ -52,6 +52,18 @@ This document provides a complete, high-level technical summary of all engineeri
   * **Offline Models**: Implemented `local_files_only=True` to load HuggingFace models strictly from cache, resolving internet connection dropouts on the server.
   * **Sweep Run**: Successfully trained all configurations **A0** to **A7** across 5 folds and 35 epochs, documenting the final table in `EXPERIMENTS.md`.
 
+### Phase 8: GPU Production Training — A7 Full Pipeline (2026-07-22)
+* **Goal**: Train the full A7 architecture on 100% of the dataset and produce a clean, deployable production checkpoint.
+* **Server**: `dgxhnode2` (DGX H-node, NVIDIA GPU)
+* **Implementation**:
+  * **Full A7 Pipeline**: Trained with Unfrozen Cross-Attention, Auxiliary CTC Loss (`λ=0.3`), Modality Encoders (Pose/Hand/Face), landmark normalization, data augmentation, and `hi_IN → en_XX` tokenizer priming.
+  * **Single Split Evaluation**: Used a clean 90/10 train/val split (no post-hoc leakage) to produce honest validation metrics.
+  * **Checkpoint Path**: `models/A7_production_v2/checkpoint_best.pt` on the DGX server.
+  * **AI Service Update**: Updated `ai-service/main.py` checkpoint priority list to load `A7_production_v2` first.
+* **Validation Results** (clean single split):
+  * BLEU-1: **28.33** | BLEU-2: **24.75** | BLEU-3: **22.87** | BLEU-4: **22.66**
+  * ROUGE-L: **28.04** | WER: **84.51%**
+
 ---
 
 ## 📊 Final Sweep Results Table (5-Fold Cross-Validation)
@@ -70,9 +82,13 @@ This document provides a complete, high-level technical summary of all engineeri
 ---
 
 ## 🚀 Production Deployment & API Integration
-1. **Production Training**: Trained the optimal model architecture (**A5**) on the complete dataset with checkpoint writing enabled, saving the deployable model to:
+1. **Production Training (Run 1)**: Trained the **A5** architecture on the complete dataset with checkpoint writing enabled:
    * `/workspace/SignLink/models/A5_production/checkpoint_best.pt`
-2. **FastAPI Backend Integration**:
+2. **Production Training (Run 2 — Current Active)**: Trained the full **A7** architecture (Unfrozen Cross-Attention + CTC + Modality Encoders) on `dgxhnode2` GPU — **2026-07-22**:
+   * `/workspace/SignLink/models/A7_production_v2/checkpoint_best.pt`
+   * **Val BLEU-4**: 22.66 | **ROUGE-L**: 28.04 | **WER**: 84.51%
+3. **FastAPI Backend Integration**:
    * Updated `ai-service/main.py` with a **Dynamic Architecture Loader** that inspects the checkpoint keys directly. It automatically detects and configures the presence of modality encoders, LoRA parameters, and CTC loss structures.
    * Modified the model and tokenizer initialization methods in `main.py` to use `local_files_only=True` and offline settings, ensuring startup stability.
-   * Restarted the AI service, loading the new A5 production model onto the server GPU.
+   * Updated checkpoint priority list to load `A7_production_v2` first, falling back to `A7_production` then `A5_production`.
+   * Restarted the AI service, loading the A7 production v2 model onto the server GPU.

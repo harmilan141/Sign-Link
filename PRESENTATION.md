@@ -32,27 +32,30 @@ This document contains copy-pasteable slides for the **Results** and **Evaluatio
 
 ## 🖥️ Slide 2: Production Checkpoint & Held-Out Test Evaluation
 
-### **Slide Title**: Production Model Evaluation (Held-Out Test Set)
-### **Subtitle**: Evaluating the production A7 checkpoint on a dedicated test split (n=69, seed=99, no retraining).
+### **Slide Title**: Production Model Evaluation (GPU Training Run — A7 Full Pipeline)
+### **Subtitle**: A7 model trained on `dgxhnode2` GPU server. Validation metrics on clean 90/10 split (no leakage).
 
 ---
 
-### **Metrics Dashboard**
+### **Metrics Dashboard — Production Run 2 (2026-07-22, Clean Val)**
 
-* 📊 **BLEU-4 Score**: **28.25**
-* 📊 **ROUGE-L Score**: **39.10**
-* 📊 **Word Error Rate (WER)**: **71.20%**
-* 📊 **BLEU-1 / BLEU-2 / BLEU-3**: **35.00 / 31.57 / 29.85**
+* 📊 **BLEU-4 Score**: **22.66** ✅ Clean validation
+* 📊 **BLEU-1 / BLEU-2 / BLEU-3**: **28.33 / 24.75 / 22.87**
+* 📊 **ROUGE-L Score**: **28.04**
+* 📊 **Word Error Rate (WER)**: **84.51%** (before LLM refinement)
+
+> *(For reference — Previous held-out test, seed=99: BLEU-4 = 28.25, ROUGE-L = 39.10, WER = 71.20% — note: 85.5% training overlap, inflated)*
 
 ---
 
 ### **Key Talking Points for Slide 2**
+* **Honest Generalization**: The clean val split BLEU-4 of **22.66** is the reliable generalization metric — it uses strictly unseen examples with no training overlap.
 * **BLEU-4 vs. WER Relationship**: 
   * BLEU-4 scores n-gram precision overlap, which captures key concepts accurately.
   * Word Error Rate (WER) is an edit-distance metric—meaning minor word substitutions, tense shifts, or missing articles count heavily as errors, even when semantic translation is correct.
+  * **Post-LLM refinement** via Groq / Llama-3.3-70B significantly reduces effective WER by correcting decoding artifacts.
 * **Data Leakage & Post-Hoc Splitting**:
-  * The production checkpoint achieved **28.25 BLEU-4** (higher than the validation split's 14.42) because it was trained on 90% of the dataset under `seed=42`.
-  * Carving the test set post-hoc with `seed=99` meant that **59 of the 69 test samples (85.5%)** had already been seen during training.
+  * The previous held-out test (seed=99) achieved **28.25 BLEU-4** (higher than the validation split's 22.66) because **59 of the 69 test samples (85.5%)** had been seen during training.
   * This is an honest methodological finding that demonstrates the importance of locking test splits *prior* to training sweeps.
 
 ---

@@ -1,9 +1,11 @@
 # experiment.yaml
-# central experiment configuration file for ISL-to-English translation model training.
+# Central experiment configuration file for ISL-to-English translation model training.
+# --- ACTIVE CONFIG: A7 Production Run 2 (GPU-trained 2026-07-22, dgxhnode2) ---
+# Val BLEU-4: 22.66 | ROUGE-L: 28.04 | WER: 84.51%
 
 # Data Paths
 npz_dir: "/workspace/SignLink/preprocessed"
-save_dir: "/workspace/SignLink/models"
+save_dir: "/workspace/SignLink/models/A7_production_v2"
 log_dir: "/workspace/SignLink/logs"
 
 # Training Settings
@@ -19,25 +21,26 @@ use_cross_val: false
 k_folds: 5
 val_split: 0.1
 
-# Tokenizer Priming settings
+# Tokenizer Priming settings (A7: hi_IN source, en_XX target)
 src_lang: "hi_IN"
 tgt_lang: "en_XX"
 
 # Model Hyperparameters
-input_dim: 1665  # 1662 coordinates + 3 mask bits
+input_dim: 1665  # 1662 coordinates + 3 visibility mask bits
 d_model: 512
 nhead: 8
 num_encoder_layers: 6
-use_modality_encoders: false
+use_modality_encoders: true  # A3+: Separate Pose/Hand/Face linear encoders
 
 # Decoder Adaptation Options
 # Choices: "frozen", "cross_attn_unfrozen", "lora_cross_attn"
-decoder_adapt_mode: "frozen"
+# A7: full cross-attention unfrozen (best quality, 57.5M trainable params)
+decoder_adapt_mode: "cross_attn_unfrozen"
 lora_r: 8
 lora_alpha: 16.0
 
-# Auxiliary Loss Parameters
-use_auxiliary_ctc: false
+# Auxiliary Loss Parameters (A5+: CTC alignment head)
+use_auxiliary_ctc: true
 lambda_ctc: 0.3
 
 # Data Augmentation Probability / Scale Settings

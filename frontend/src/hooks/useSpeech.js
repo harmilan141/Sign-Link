@@ -99,26 +99,77 @@ export function useSpeechToText({ onResult, continuous = false } = {}) {
 
 export function useTextToSpeech() {
   const [speaking, setSpeaking] = useState(false);
-  const supported = useMemo(() => 'speechSynthesis' in window && 'SpeechSynthesisUtterance' in window, []);
-
-  const speak = useCallback(
-    (text, lang = 'en-US') => {
-      if (!supported || !text) return;
-      window.speechSynthesis.cancel();
-      const utterance = new SpeechSynthesisUtterance(text);
-      utterance.lang = lang;
-      utterance.onstart = () => setSpeaking(true);
-      utterance.onend = () => setSpeaking(false);
-      utterance.onerror = () => setSpeaking(false);
-      window.speechSynthesis.speak(utterance);
-    },
-    [supported]
-  );
+  const audioRef = useRef(null);
 
   const stop = useCallback(() => {
-    if (supported) window.speechSynthesis.cancel();
+    if (audioRef.current) {
+      try {
+        audioRef.current.pause();
+        audioRef.current = null;
+      } catch (e) {}
+    }
+    if ('speechSynthesis' in window) {
+      window.speechSynthesis.cancel();
+    }
     setSpeaking(false);
-  }, [supported]);
+  }, []);
 
-  return { speak, speaking, stop, supported };
+  const speak = useCallback(
+    async (text, lang = 'hi') => {
+      if (!text || !text.trim()) {
+        stop();
+        return;
+      }
+      stop();
+
+      // Normalize lang code (e.g. 'hi-IN' -> 'hi', 'pa-IN' -> 'pa')
+      const targetLang = (lang || 'hi').split('-')[0].toLowerCase();
+
+      try {
+        setSpeaking(true);
+        const res = await fetch('/api/text-to-speech', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text, targetLanguage: targetLang })
+        });
+
+        if (res.ok) {
+          const data = await res.json();
+          if (data.audioUrl) {
+            const audio = new Audio(data.audioUrl);
+            audioRef.current = audio;
+            audio.onended = () => setSpeaking(false);
+            audio.onerror = () => {
+              setSpeaking(false);
+              fallbackSpeechSynthesis(text, targetLang);
+            };
+            await audio.play();
+            return;
+          }
+        }
+      } catch (err) {
+        console.warn('[Cloud TTS] Cloud synthesis failed, using browser fallback:', err);
+      }
+
+      // Fallback to local SpeechSynthesis if cloud TTS is unreachable
+      fallbackSpeechSynthesis(text, targetLang);
+    },
+    [stop]
+  );
+
+  function fallbackSpeechSynthesis(text, lang) {
+    if (!('speechSynthesis' in window)) {
+      setSpeaking(false);
+      return;
+    }
+    window.speechSynthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.lang = lang === 'hi' ? 'hi-IN' : lang === 'pa' ? 'pa-IN' : 'en-US';
+    utterance.onstart = () => setSpeaking(true);
+    utterance.onend = () => setSpeaking(false);
+    utterance.onerror = () => setSpeaking(false);
+    window.speechSynthesis.speak(utterance);
+  }
+
+  return { speak, speaking, stop, supported: true };
 }

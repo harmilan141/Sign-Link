@@ -1,4 +1,4 @@
-import { Maximize, Mic, MicOff, PhoneOff, Video, VideoOff, Play, Square, Volume2, VolumeX, Sparkles, ArrowLeftRight } from 'lucide-react';
+import { Maximize, Mic, MicOff, PhoneOff, Video, VideoOff, Play, Square, Volume2, VolumeX, Sparkles, ArrowLeftRight, Languages } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { LandmarkOverlay } from '../components/LandmarkOverlay.jsx';
@@ -40,6 +40,12 @@ export function VideoCall() {
   useEffect(() => {
     autoTTSRef.current = autoTTS;
   }, [autoTTS]);
+
+  const [callTargetLang, setCallTargetLang] = useState(() => user?.preferred_language || 'hi');
+  const callTargetLangRef = useRef(callTargetLang);
+  useEffect(() => {
+    callTargetLangRef.current = callTargetLang;
+  }, [callTargetLang]);
   const [speakingIdx, setSpeakingIdx] = useState(null);
   const [typedMessage, setTypedMessage] = useState('');
   const [localLiveCaption, setLocalLiveCaption] = useState('');
@@ -100,20 +106,16 @@ export function VideoCall() {
     }
   }
 
-  function handleSpeak(text, idx) {
-    if (!('speechSynthesis' in window)) return;
+  function handleSpeak(text, idx, langCode) {
+    if (!text) return;
     if (speakingIdx === idx && idx !== -1) {
-      window.speechSynthesis.cancel();
+      stop();
       setSpeakingIdx(null);
       return;
     }
-    window.speechSynthesis.cancel();
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.lang = 'en-US';
-    utterance.onstart = () => { if (idx !== -1) setSpeakingIdx(idx); };
-    utterance.onend = () => setSpeakingIdx(null);
-    utterance.onerror = () => setSpeakingIdx(null);
-    window.speechSynthesis.speak(utterance);
+    const voiceLang = langCode || callTargetLang || 'hi';
+    if (idx !== -1) setSpeakingIdx(idx);
+    speak(text, voiceLang);
   }
 
   async function handleTranslateMessage(idx, text, targetLang) {
@@ -125,13 +127,16 @@ export function VideoCall() {
     }));
 
     try {
-      const { data } = await api.post('/ai/translate', { text, targetLanguage: targetLang });
+      const { data } = await api.post('/translate', { text, targetLanguage: targetLang });
       setCallHistory((prev) => prev.map((item, i) => {
         if (i === idx) {
           return { ...item, translating: false, translation: data.translatedText };
         }
         return item;
       }));
+      if (data.translatedText) {
+        speak(data.translatedText, targetLang);
+      }
     } catch (error) {
       const errMsg = error.response?.data?.message || 'Translation failed';
       setCallHistory((prev) => prev.map((item, i) => {
@@ -325,12 +330,25 @@ export function VideoCall() {
                     if (translation && 
                         !translation.includes("No hands detected") && 
                         !translation.includes("Gesture too short")) {
-                      setLiveTranslationText(translation);
+                      let finalTranslation = translation;
+                      const tgtLang = callTargetLangRef.current;
+                      if (tgtLang !== 'en') {
+                        try {
+                          const { data } = await api.post('/translate', { text: translation, targetLanguage: tgtLang });
+                          if (data.translatedText) finalTranslation = data.translatedText;
+                        } catch (err) {
+                          console.error('[Auto-Trigger] Target translation failed', err);
+                        }
+                      }
+
+                      setLiveTranslationText(finalTranslation);
                       
                       const newEntry = {
                         sender: 'me',
-                        text: translation,
+                        text: finalTranslation,
+                        originalText: translation,
                         inputMethod: 'sign',
+                        targetLang: tgtLang,
                         time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
                       };
                       setCallHistory((prev) => [...prev, newEntry]);
@@ -338,9 +356,15 @@ export function VideoCall() {
                       if (receiverId) {
                         socket?.emit('translation', {
                           receiverId: Number(receiverId),
-                          text: translation,
-                          inputMethod: 'sign'
+                          text: finalTranslation,
+                          originalText: translation,
+                          inputMethod: 'sign',
+                          targetLang: tgtLang
                         });
+                      }
+
+                      if (autoTTSRef.current) {
+                        speak(finalTranslation, tgtLang);
                       }
                     }
                   } catch (err) {
@@ -403,21 +427,34 @@ export function VideoCall() {
     socket.on('call-ended', endLocalCall);
 
     // Socket translation listener
-    socket.on('translation', ({ text, inputMethod }) => {
+    socket.on('translation', async ({ text, originalText, inputMethod, targetLang }) => {
       console.log('[WebRTC] Received remote translation:', text, inputMethod);
       setRemoteLiveCaption('');
+      
+      let displayText = text;
+      const myLang = callTargetLangRef.current;
+      if (myLang !== 'en' && myLang !== targetLang) {
+        try {
+          const { data } = await api.post('/translate', { text: text || originalText, targetLanguage: myLang });
+          if (data.translatedText) displayText = data.translatedText;
+        } catch (err) {
+          console.error('[WebRTC] Remote translation failed:', err);
+        }
+      }
+
       const newEntry = {
         sender: 'remote',
-        text: text,
+        text: displayText,
+        originalText: originalText || text,
         inputMethod: inputMethod || 'sign',
         time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
       };
       setCallHistory((prev) => [...prev, newEntry]);
-      setRemoteTranslationText(text);
+      setRemoteTranslationText(displayText);
 
-      // Auto-play TTS if enabled and input method is sign language
+      // Auto-play TTS if enabled
       if (autoTTSRef.current && (inputMethod === 'sign' || !inputMethod)) {
-        handleSpeak(text, -1);
+        speak(displayText, myLang);
       }
     });
 
@@ -479,12 +516,25 @@ export function VideoCall() {
         if (translation && 
             !translation.includes("No hands detected") && 
             !translation.includes("Gesture too short")) {
-          setLiveTranslationText(translation);
+          let finalTranslation = translation;
+          const tgtLang = callTargetLangRef.current;
+          if (tgtLang !== 'en') {
+            try {
+              const { data } = await api.post('/translate', { text: translation, targetLanguage: tgtLang });
+              if (data.translatedText) finalTranslation = data.translatedText;
+            } catch (err) {
+              console.error('[Manual Translate] Target translation failed', err);
+            }
+          }
+
+          setLiveTranslationText(finalTranslation);
           
           const newEntry = {
             sender: 'me',
-            text: translation,
+            text: finalTranslation,
+            originalText: translation,
             inputMethod: 'sign',
+            targetLang: tgtLang,
             time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
           };
           setCallHistory((prev) => [...prev, newEntry]);
@@ -492,9 +542,15 @@ export function VideoCall() {
           if (receiverId && translation) {
             socket?.emit('translation', {
               receiverId: Number(receiverId),
-              text: translation,
-              inputMethod: 'sign'
+              text: finalTranslation,
+              originalText: translation,
+              inputMethod: 'sign',
+              targetLang: tgtLang
             });
+          }
+
+          if (autoTTSRef.current) {
+            speak(finalTranslation, tgtLang);
           }
         }
       } catch (err) {
@@ -774,9 +830,33 @@ export function VideoCall() {
 
         {status === 'Connected' && commMode && (
           <div className="call-translation-sidebar card">
-            <div className="sidebar-header">
-              <Sparkles size={16} className="sparkle-icon" />
-              <h3>Shared Conversation</h3>
+            <div className="sidebar-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <Sparkles size={16} className="sparkle-icon" />
+                <h3>Shared Conversation</h3>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                <Languages size={14} />
+                <select
+                  value={callTargetLang}
+                  onChange={(e) => setCallTargetLang(e.target.value)}
+                  style={{
+                    padding: '4px 8px',
+                    borderRadius: '6px',
+                    fontSize: '12px',
+                    fontWeight: 600,
+                    background: '#0f172a',
+                    color: '#f8fafc',
+                    border: '1px solid #334155',
+                    cursor: 'pointer'
+                  }}
+                  aria-label="Call translation target language"
+                >
+                  <option value="hi" style={{ color: '#0f172a', backgroundColor: '#ffffff' }}>Hindi (हिन्दी)</option>
+                  <option value="pa" style={{ color: '#0f172a', backgroundColor: '#ffffff' }}>Punjabi (ਪੰਜਾਬੀ)</option>
+                  <option value="en" style={{ color: '#0f172a', backgroundColor: '#ffffff' }}>English</option>
+                </select>
+              </div>
             </div>
             
             {commMode === 'DeafMute' ? (

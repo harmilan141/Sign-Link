@@ -30,8 +30,8 @@ export function Translator() {
     }
   });
 
-  // Target Language: 'en' (English), 'hi' (Hindi), 'pa' (Punjabi)
-  const [targetLang, setTargetLang] = useState('en');
+  // Target Language: 'hi' (Hindi), 'pa' (Punjabi), 'en' (English)
+  const [targetLang, setTargetLang] = useState('hi');
 
   // Webcam states
   const [webcamActive, setWebcamActive] = useState(false);
@@ -225,31 +225,26 @@ export function Translator() {
   }
 
   // Translation helpers
-  function handleNewTranslation(text) {
+  async function handleNewTranslation(text) {
     let finalOutput = text;
 
-    // Apply target language translation
-    if (targetLang === 'hi') {
-      // Mock translated/transliterated values for common signs
-      const hiMocks = {
-        "what is your name": "आपका नाम क्या है?",
-        "where is the train station": "रेलवे स्टेशन कहाँ है?",
-        "can you repeat that please": "क्या आप इसे दोहरा सकते हैं?",
-        "how can i help you": "मैं आपकी क्या मदद कर सकता हूँ?",
-        "are you free today": "क्या आप आज खाली हैं?",
-        "please sit down": "कृपया बैठ जाइए"
-      };
-      finalOutput = hiMocks[text.toLowerCase()] || text;
-    } else if (targetLang === 'pa') {
-      const paMocks = {
-        "what is your name": "ਤੁਹਾਡਾ ਨਾਮ ਕੀ ਹੈ?",
-        "where is the train station": "ਰੇਲਵੇ ਸਟੇਸ਼ਨ ਕਿੱਥੇ ਹੈ?",
-        "can you repeat that please": "ਕੀ ਤੁਸੀਂ ਇਸਨੂੰ ਦੁਹਰਾ ਸਕਦੇ ਹੋ?",
-        "how can i help you": "ਮੈਂ ਤੁਹਾਡੀ ਕੀ ਮਦਦ ਕਰ ਸਕਦਾ ਹਾਂ?",
-        "are you free today": "ਕੀ ਤੁਸੀਂ ਅੱਜ ਵਿਹਲੇ ਹੋ?",
-        "please sit down": "ਕਿਰਪਾ ਕਰਕੇ ਬੈਠ ਜਾਓ"
-      };
-      finalOutput = paMocks[text.toLowerCase()] || text;
+    // If target language is not English, translate via backend API (Google Translate)
+    if (targetLang !== 'en' && text && !text.includes('too short') && !text.includes('No hands')) {
+      try {
+        const response = await fetch('/api/translate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text, targetLanguage: targetLang })
+        });
+        if (response.ok) {
+          const data = await response.json();
+          if (data.translatedText) {
+            finalOutput = data.translatedText;
+          }
+        }
+      } catch (err) {
+        console.error('[Translation API] Failed to translate to target language:', err);
+      }
     }
 
     setTranslationText(finalOutput);
@@ -264,16 +259,13 @@ export function Translator() {
     };
     setHistory((prev) => [newItem, ...prev].slice(0, 20));
 
-    // Automatically speak the text using TTS if English
-    if (targetLang === 'en') {
-      speak(finalOutput, 'en-US');
-    }
+    // Automatically speak the translated text using Cloud TTS
+    speak(finalOutput, targetLang);
   }
 
   function handleSpeak() {
     if (!translationText) return;
-    const voiceLang = targetLang === 'hi' ? 'hi-IN' : targetLang === 'pa' ? 'pa-IN' : 'en-US';
-    speak(translationText, voiceLang);
+    speak(translationText, targetLang);
   }
 
   function clearHistory() {
@@ -303,9 +295,9 @@ export function Translator() {
         <div className="lang-picker-group">
           <Languages size={18} />
           <select value={targetLang} onChange={(e) => setTargetLang(e.target.value)} aria-label="Translate to">
-            <option value="en">Translate to English</option>
-            <option value="hi">Translate to Hindi (हिन्दी)</option>
-            <option value="pa">Translate to Punjabi (ਪੰਜਾਬੀ)</option>
+            <option value="hi" style={{ color: '#0f172a', backgroundColor: '#ffffff' }}>Translate to Hindi (हिन्दी)</option>
+            <option value="pa" style={{ color: '#0f172a', backgroundColor: '#ffffff' }}>Translate to Punjabi (ਪੰਜਾਬੀ)</option>
+            <option value="en" style={{ color: '#0f172a', backgroundColor: '#ffffff' }}>Translate to English</option>
           </select>
         </div>
       </div>

@@ -10,8 +10,11 @@ from __future__ import annotations
 
 from typing import Any, List, Dict
 
+# pyrefly: ignore [missing-import]
 import torch
+# pyrefly: ignore [missing-import]
 from torch.nn.utils.rnn import pad_sequence
+# pyrefly: ignore [missing-import]
 from torch.utils.data import DataLoader
 
 
@@ -23,7 +26,7 @@ class SignLanguageCollate:
     def __init__(self, pad_token_id: int) -> None:
         self.pad_token_id = pad_token_id
 
-    def __call__(self, batch: List[Dict[str, Any]]) -> Dict[str, torch.Tensor | List[str]]:
+    def __call__(self, batch: List[Dict[str, Any]]) -> Dict[str, Any]:
         landmarks = [item["landmarks"] for item in batch]
         input_ids = [item["input_ids"] for item in batch]
         attention_mask = [item["attention_mask"] for item in batch]
